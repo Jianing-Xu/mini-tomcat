@@ -5,6 +5,18 @@
 - 范围：`SIMPLE_BIO` Connector、Container 四层路由、`WEB_XML` 静态映射、Servlet 生命周期、shutdown 资源释放。
 - 不含：Session、ClassLoader、Filter、Listener、注解部署、Valve 执行链。
 
+## 1.1 当前实现对齐状态
+
+- Phase 1 验收范围已全部落地。
+- 当前手工验收入口：
+  - `examples.phase1basic.Phase1ExampleMain`
+  - `examples.phase1basic.Phase1ConflictCheckMain`
+- 当前自动化测试覆盖：
+  - `WebXmlParserTest`
+  - `SimpleMapperTest`
+  - `StandardWrapperTest`
+  - `HttpResponseTest`
+
 ## 2. Given / When / Then 验收用例
 
 ### 2.1 正常路径
@@ -45,6 +57,7 @@
   - Wrapper 不再重复调用 `init`。
   - 仅调用 `service`。
   - 请求处理成功并返回 200。
+  - 控制台不再出现第二次 `DemoServlet init`。
 
 ### 2.2 失败路径
 
@@ -104,6 +117,7 @@
 - Then
   - 原响应状态码与响应体保持不变。
   - 容器只记录异常，不覆写已提交响应。
+  - 当前示例的预期响应体为 `partial body`。
 
 ### 2.3 shutdown 与资源释放
 
@@ -121,11 +135,11 @@
 #### 用例 10：未初始化 Servlet 在 shutdown 不执行 destroy
 
 - Given
-  - 某 Wrapper 已注册但从未收到请求，Servlet 尚未初始化。
+  - `InitProbeServlet` 已注册但从未收到请求，Servlet 尚未初始化。
 - When
   - 执行 `Bootstrap.stop()`。
 - Then
-  - 该 Wrapper 不调用 `destroy`。
+  - `InitProbeServlet` 不调用 `destroy`。
   - 停机流程继续完成。
 
 ## 3. 验收判定矩阵
@@ -139,10 +153,22 @@
 | 响应已提交后异常 | 保持原值 | 不覆写响应，只记录异常 |
 | 映射冲突 | 启动失败 | Connector 不进入运行态 |
 
+## 3.1 当前示例命令映射
+
+| 场景 | 命令 | 预期 |
+| --- | --- | --- |
+| 启动示例 | `mvn -DskipTests exec:java -Dexec.mainClass=examples.phase1basic.Phase1ExampleMain` | 监听 `localhost:8080` |
+| 正常 200 | `curl -i http://localhost:8080/app/demo` | `200`，body=`mini-tomcat demo ok` |
+| Context 404 | `curl -i http://localhost:8080/unknown/demo` | `404` |
+| Wrapper 404 | `curl -i http://localhost:8080/app/missing` | `404` |
+| Servlet 500 | `curl -i http://localhost:8080/app/error` | `500` |
+| 提交后异常 | `curl -i http://localhost:8080/app/partial` | 保持 `200`，body=`partial body` |
+| 映射冲突 | `mvn -DskipTests exec:java -Dexec.mainClass=examples.phase1basic.Phase1ConflictCheckMain` | 输出 duplicate mapping 错误 |
+
 ## 4. 资源释放与关闭验证策略（shutdown）
 
 - 验证 Connector 停止后不再接受新请求。
-- 验证 shutdown 顺序固定为 `Connector -> Wrapper -> Context -> Host -> Engine` 的停止入口与 `destroy` 释放责任。
+- 验证 shutdown 入口为 `Connector.stop()`，随后由 `Engine.stop()` 级联对子容器执行 `destroy`。
 - 验证所有已初始化 Servlet 的 `destroy` 调用次数为 1。
-- 验证未初始化 Servlet 不触发 `destroy`。
+- 验证未初始化 `InitProbeServlet` 不触发 `destroy`。
 - 验证映射表、部署定义、线程池引用在 stop 后进入不可用状态。

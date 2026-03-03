@@ -67,7 +67,8 @@ com.xujn.minitomcat
 │   ├── WebXmlParser
 │   ├── WebAppDefinition
 │   ├── ServletDefinition
-│   └── UrlPattern
+│   ├── ServerDefinition
+│   └── DeploymentException
 ├── support
 │   ├── exception
 │   ├── http
@@ -331,8 +332,8 @@ interface Connector extends Lifecycle {
 }
 
 interface ProtocolHandler extends Lifecycle {
-    HttpRequest parseRequest()
-    HttpResponse createResponse()
+    HttpRequest parseRequest(Socket socket) throws IOException
+    HttpResponse createResponse(Socket socket) throws IOException
 }
 ```
 
@@ -366,6 +367,7 @@ interface Wrapper extends Container {
     String getServletName()
     Servlet allocate()
     void deallocate(Servlet servlet)
+    void invoke(HttpRequest request, HttpResponse response)
 }
 ```
 
@@ -710,6 +712,14 @@ sequenceDiagram
 - 阶段切分原则：每个 Phase 先落设计骨架，再落流程细化，再补充验收文档。
 - 合并原则：仅当当前 Phase 验收标准全部满足后进入下一个 Phase。
 - 回滚原则：任何增强能力不得修改前一阶段的最小闭环判定标准。
+
+## 7.5 当前实现对齐说明
+
+- Phase 1 运行时代码已经落地并通过本地编译、自动化测试与 examples 手工验证。
+- 当前代码对蓝图的两处收敛：
+  - `ProtocolHandler` 使用 `Socket` 入参以适配 `SIMPLE_BIO` 实现。
+  - `deploy.UrlPattern` 未单独建模，当前由 `WrapperMapping.pattern + MatchType` 表达映射规则。
+- 当前代码保留 `Pipeline/Valve` 结构，但主链路仍由 `Container.invoke()` 直接驱动，这与 Phase 1 文档边界一致。
 
 # 8. Git 规范（Angular Conventional Commits）
 

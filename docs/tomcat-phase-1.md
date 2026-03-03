@@ -26,6 +26,14 @@
 - `tests/acceptance-tomcat-phase-1.md`
 - Phase 1 范围内的接口草图、流程图、验收标准与 Git 交付计划
 
+### 1.4 与当前代码实现的对齐结论
+
+- Phase 1 `MUST` 范围已落地：`SIMPLE_BIO` Connector、四层容器树、`WEB_XML` 映射、Servlet 生命周期、startup/runtime/shutdown 闭环、examples 与自动化测试。
+- 当前不存在 Phase 1 `MUST` 范围内的功能缺口。
+- 设计蓝图中以下抽象已按更小实现粒度收敛：
+  - `deploy.UrlPattern` 未单独建模，当前实现使用 `WrapperMapping.pattern + MatchType` 表达 URL 规则。
+  - `ProtocolHandler` 接口已从无参草图收敛为 `Socket` 入参版本，以匹配真实 BIO 实现。
+
 ## 2. 设计与关键决策
 
 ### 2.1 包结构（com.xujn）
@@ -63,7 +71,8 @@ com.xujn.minitomcat
 │   ├── WebXmlParser
 │   ├── WebAppDefinition
 │   ├── ServletDefinition
-│   └── UrlPattern
+│   ├── ServerDefinition
+│   └── DeploymentException
 ├── pipeline
 │   ├── Pipeline
 │   ├── Valve
@@ -88,8 +97,8 @@ interface Connector extends Lifecycle {
 }
 
 interface ProtocolHandler extends Lifecycle {
-    HttpRequest parseRequest()
-    HttpResponse createResponse()
+    HttpRequest parseRequest(Socket socket) throws IOException
+    HttpResponse createResponse(Socket socket) throws IOException
 }
 ```
 
@@ -102,6 +111,7 @@ interface Container extends Lifecycle {
     void setParent(Container parent)
     void addChild(Container child)
     Container findChild(String name)
+    Pipeline getPipeline()
     void invoke(HttpRequest request, HttpResponse response)
 }
 
@@ -122,6 +132,7 @@ interface Wrapper extends Container {
     String getServletName()
     Servlet allocate()
     void deallocate(Servlet servlet)
+    void invoke(HttpRequest request, HttpResponse response)
 }
 ```
 
@@ -249,9 +260,20 @@ void flushBuffer()
 void sendError(int status, String message)
 ```
 
-### 2.3 生命周期与执行顺序
+### 2.3 当前已落地的关键类型
 
-#### 2.3.1 startup
+| 类型 | 责任 | 当前实现文件 |
+| --- | --- | --- |
+| `StandardServletConfig` | 将 `ServletDefinition` 转换为运行期 `ServletConfig` | `src/main/java/com/xujn/minitomcat/container/standard/StandardServletConfig.java` |
+| `StandardServletContext` | 提供 Context 级属性存储 | `src/main/java/com/xujn/minitomcat/container/standard/StandardServletContext.java` |
+| `DeploymentException` | 统一部署期失败表达 | `src/main/java/com/xujn/minitomcat/deploy/DeploymentException.java` |
+| `RequestLine` | 承载请求行解析结果 | `src/main/java/com/xujn/minitomcat/connector/RequestLine.java` |
+| `SocketProcessor` | 负责单连接请求处理 | `src/main/java/com/xujn/minitomcat/connector/bio/SocketProcessor.java` |
+| `InitProbeServlet` | shutdown 未初始化 Servlet 验收探针 | `examples/phase1-basic/InitProbeServlet.java` |
+
+### 2.4 生命周期与执行顺序
+
+#### 2.4.1 startup
 
 1. 读取服务器配置与 `web.xml`。
 2. 创建 Engine。
@@ -262,7 +284,7 @@ void sendError(int status, String message)
 7. Connector 绑定 Engine。
 8. 启动 Connector。
 
-#### 2.3.2 runtime
+#### 2.4.2 runtime
 
 1. Connector 接收 HTTP 请求。
 2. ProtocolHandler 解析请求并创建 Request/Response。
@@ -273,12 +295,13 @@ void sendError(int status, String message)
 7. Wrapper 调用 `Servlet.service`。
 8. Response 刷出并返回客户端。
 
-#### 2.3.3 shutdown
+#### 2.4.3 shutdown
 
 1. Connector 停止接收新请求。
-2. 按 `Wrapper -> Context -> Host -> Engine` 反序停机。
-3. 对每个已初始化 Servlet 调用 `destroy`。
-4. 释放映射表、部署模型与线程池引用。
+2. Engine 停止并级联对子容器执行 `destroy`。
+3. `Host -> Context -> Wrapper` 在父容器 stop 流程中递归释放。
+4. 对每个已初始化 Servlet 调用 `destroy`。
+5. 释放映射表、部署模型与线程池引用。
 
 > [注释] 生命周期顺序固定为“先容器树、后 Connector；停机反序”
 > - 背景：Connector 进入运行态之前，Host、Context、Wrapper 的映射与 Servlet 定义必须已稳定。
@@ -359,6 +382,17 @@ flowchart TD
 > - 取舍：Phase 1 固定为 “Host 优先、Context 最长匹配、Wrapper 优先级匹配”。
 > - 可选增强：Host alias、版本化 Context、映射命中统计。
 
+### 3.4 已落地示例与配置
+
+- 主示例入口：`examples.phase1basic.Phase1ExampleMain`
+- 冲突校验入口：`examples.phase1basic.Phase1ConflictCheckMain`
+- 部署配置：`conf/phase1-basic/server.properties`
+- Servlet 映射：
+  - `/demo -> DemoServlet`
+  - `/error -> ErrorServlet`
+  - `/partial -> PartialServlet`
+  - `/init-probe -> InitProbeServlet`
+
 ## 4. 验收标准（可量化）
 
 - 启动期必须完成一棵包含 `1 Engine + >=1 Host + >=1 Context + >=1 Wrapper` 的容器树构建。
@@ -370,6 +404,19 @@ flowchart TD
 - 未命中 Context 或 Wrapper 时必须返回 404。
 - Servlet 抛出异常且响应未提交时必须返回 500。
 - 响应已提交后再抛异常时不得覆写状态码与响应体。
+
+### 4.1 当前实现的实际验证结果
+
+- `mvn test` 已通过。
+- `mvn -DskipTests package` 已通过。
+- `Phase1ExampleMain` 可监听 `8080`。
+- `/app/demo` 返回 `200` 与 `mini-tomcat demo ok`。
+- `/unknown/demo` 返回 `404`。
+- `/app/missing` 返回 `404`。
+- `/app/error` 返回 `500`，错误消息包含 `servlet/host/context/requestUri/cause`。
+- `/app/partial` 在提交响应后抛异常，原 `200` 与 `partial body` 保持不变。
+- `Phase1ConflictCheckMain` 输出映射冲突并退出。
+- shutdown 时已初始化 `DemoServlet` 进入 `destroy`，未访问的 `InitProbeServlet` 不进入 `destroy`。
 
 ## 5. Git 交付计划
 
