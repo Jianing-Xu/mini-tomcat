@@ -1,21 +1,19 @@
-# mini-tomcat
+# Phase 1 Example
 
-Phase 1 implements a minimal runnable servlet container with:
-
-- SIMPLE_BIO connector
-- Engine / Host / Context / Wrapper hierarchy
-- `web.xml` servlet registration
-- Servlet `init/service/destroy` lifecycle
-- examples plus curl based verification
-
-Quick start:
+Build:
 
 ```bash
 mvn clean test
+mvn -DskipTests package
+```
+
+Run:
+
+```bash
 mvn -DskipTests exec:java -Dexec.mainClass=examples.phase1basic.Phase1ExampleMain
 ```
 
-Key curl checks:
+Verify:
 
 ```bash
 curl -i http://localhost:8080/app/demo
@@ -25,10 +23,8 @@ curl -i http://localhost:8080/app/error
 curl -i http://localhost:8080/app/partial
 ```
 
-Conflict validation:
+Conflict check:
 
 ```bash
 mvn -DskipTests exec:java -Dexec.mainClass=examples.phase1basic.Phase1ConflictCheckMain
 ```
-
-Detailed run and verification steps live in `examples/phase1-basic/README.md`.
