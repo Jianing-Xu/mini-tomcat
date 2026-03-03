@@ -66,11 +66,12 @@ public class MiniTomcatBuilder {
     }
 
     private WebServerConfig loadServerConfig(Path serverPropertiesPath) {
+        Path normalizedServerPropertiesPath = serverPropertiesPath.toAbsolutePath().normalize();
         Properties properties = new Properties();
-        try (InputStream inputStream = Files.newInputStream(serverPropertiesPath)) {
+        try (InputStream inputStream = Files.newInputStream(normalizedServerPropertiesPath)) {
             properties.load(inputStream);
         } catch (IOException ex) {
-            throw new IllegalArgumentException("Failed to load server properties from " + serverPropertiesPath, ex);
+            throw new IllegalArgumentException("Failed to load server properties from " + normalizedServerPropertiesPath, ex);
         }
 
         String host = properties.getProperty("server.host", "localhost");
@@ -78,7 +79,10 @@ public class MiniTomcatBuilder {
         String contextPath = properties.getProperty("server.contextPath", "/app");
         int workerThreads = Integer.parseInt(properties.getProperty("server.workerThreads", "8"));
         int backlog = Integer.parseInt(properties.getProperty("server.backlog", "50"));
-        Path webXmlPath = Path.of(properties.getProperty("server.webXml")).toAbsolutePath().normalize();
+        Path rawWebXmlPath = Path.of(properties.getProperty("server.webXml"));
+        Path webXmlPath = rawWebXmlPath.isAbsolute()
+                ? rawWebXmlPath.normalize()
+                : normalizedServerPropertiesPath.getParent().resolve(rawWebXmlPath).normalize();
 
         return new WebServerConfig(port, host, contextPath, workerThreads, backlog, webXmlPath);
     }
