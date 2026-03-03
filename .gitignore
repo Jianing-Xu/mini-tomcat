@@ -2,3 +2,4 @@
 *.log
 *.class
 .DS_Store
+.idea/
